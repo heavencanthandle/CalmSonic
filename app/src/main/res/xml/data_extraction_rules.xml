@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
-        <include domain="sharedpref" path="."/>
-        <include domain="database" path="."/>
+        <exclude domain="sharedpref" path="calmmusic_settings.xml" />
+        <exclude domain="sharedpref" path="calmmusic_secure_settings.xml" />
     </cloud-backup>
     <device-transfer>
-        <include domain="sharedpref" path="."/>
-        <include domain="database" path="."/>
-        <include domain="file" path="."/>
+        <exclude domain="sharedpref" path="calmmusic_settings.xml" />
+        <exclude domain="sharedpref" path="calmmusic_secure_settings.xml" />
     </device-transfer>
 </data-extraction-rules>

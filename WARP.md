@@ -16,7 +16,7 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
 
 - **Build APKs**
   - Assemble a debug APK: `./gradlew :app:assembleDebug`
-  - Assemble a release APK (unsigned unless you add signing configs): `./gradlew :app:assembleRelease`
+  - Assemble a signed release APK (uses gitignored `keystore.properties`): `./gradlew :app:assembleRelease`
 
 - **Install/run on device or emulator**
   - Install the debug build on a connected device/emulator: `./gradlew :app:installDebug`
@@ -29,7 +29,7 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
   - Run all unit tests for the app module: `./gradlew :app:testDebugUnitTest`
   - Run all connected (instrumentation) tests on a device/emulator: `./gradlew :app:connectedDebugAndroidTest`
   - Run a single unit test (replace the test class and/or method name as needed):
-    - `./gradlew :app:testDebugUnitTest --tests "com.calmapps.calmmusic.YourTestClassName"`
+    - `./gradlew :app:testDebugUnitTest --tests "com.heavencanthandle.calmsonic.YourTestClassName"`
 
 ## High-level architecture
 
@@ -43,11 +43,11 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
 - **Android app module** (`app`)
   - Uses Jetpack Compose, Navigation Compose, Material 3, and the Mudita Mindful Design (MMD) design system.
   - Depends on Apple MusicKit for Android via AARs in `app/libs/` and on AndroidX Media3 for local playback.
-  - Uses Room as a local database and SharedPreferences for lightweight settings.
+  - Uses Room as a local database, SharedPreferences for settings, and EncryptedSharedPreferences for the Subsonic password.
 
 ### Application and Apple Music wiring
 
-- **`CalmMusic` `Application` class** (`app/src/main/java/com/calmapps/calmmusic/CalmMusicApplication.kt`)
+- **`CalmMusic` `Application` class** (`app/src/main/java/com/heavencanthandle/calmsonic/CalmMusicApplication.kt`)
   - Loads the native `appleMusicSDK` library in a companion object.
   - Creates and exposes (via `lateinit` properties) the core Apple Music integration objects:
     - `SimpleTokenProvider` – implements MusicKit's `TokenProvider` and owns the developer token and music user token.
@@ -86,7 +86,7 @@ This is a single-module Android app built with the Gradle Kotlin DSL and the And
 
 ### Local database and data model
 
-All audio content (Apple Music + local files) is normalized into a small Room schema in `app/src/main/java/com/calmapps/calmmusic/data/`.
+All audio content (Apple Music + local files) is normalized into a small Room schema in `app/src/main/java/com/heavencanthandle/calmsonic/data/`.
 
 - **Database** (`CalmMusicDatabase.kt`)
   - Room `@Database` containing entities:
@@ -171,7 +171,7 @@ Playback is split between Apple Music (MusicKit) and local files (Media3), with 
   - Sets up a `NavHost` with destinations for playlist, artist, songs, albums, search, settings, and detail flows.
   - Routes user actions from the various screen composables back into database operations and playback functions.
 
-- **Screen composables** (`app/src/main/java/com/calmapps/calmmusic/ui/`)
+- **Screen composables** (`app/src/main/java/com/heavencanthandle/calmsonic/ui/`)
   - Individual screens (e.g., `SongsScreen`, `AlbumsScreen`, `ArtistsScreen`, `NowPlayingScreen`, `PlaylistsScreen`, `PlaylistDetailsScreen`, `PlaylistEditScreen`, `PlaylistAddSongsScreen`, `SearchScreen`, `SettingsScreen`) are primarily UI-only.
   - They receive data as UI models and callbacks for user actions; most side effects and data persistence are handled in `CalmMusic`.
   - Shared UI components such as `SongAndPlaylistItems`, `DashedDivider`, and MMD wrappers encapsulate repeated UI patterns.
