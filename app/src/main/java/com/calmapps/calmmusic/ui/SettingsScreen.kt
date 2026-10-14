@@ -13,16 +13,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.calmapps.calmmusic.data.StreamingProvider
@@ -65,6 +73,15 @@ fun SettingsScreen(
     localScanSkippedUnchanged: Int?,
     localScanIndexedNewOrUpdated: Int?,
     localScanDeletedMissing: Int?,
+    subsonicBaseUrl: String,
+    subsonicUsername: String,
+    subsonicPassword: String,
+    subsonicMaxBitrateKbps: Int?,
+    isTestingSubsonic: Boolean,
+    subsonicTestMessage: String?,
+    onSaveSubsonicConnection: (String, String, String) -> Unit,
+    onSubsonicMaxBitrateChange: (Int?) -> Unit,
+    onTestSubsonicClick: () -> Unit,
 ) {
     // 0 = General, 1 = Streaming, 2 = Local
     val tabOptions = listOf("General", "Streaming", "Local")
@@ -113,9 +130,9 @@ fun SettingsScreen(
 
                         TextMMD(
                             text = if (hasBatteryOptimizationExemption) {
-                                "Battery optimizations are currently ignoring CalmMusic. Background playback is less likely to be stopped, but the system may still close the app in extreme cases."
+                                "Battery optimizations are currently ignoring CalmSonic. Background playback is less likely to be stopped, but the system may still close the app in extreme cases."
                             } else {
-                                "On some devices, battery optimizations can stop CalmMusic while playing in the background. You can request an exemption so the system is less likely to pause playback."
+                                "On some devices, battery optimizations can stop CalmSonic while playing in the background. You can request an exemption so the system is less likely to pause playback."
                             },
                             fontSize = 14.sp,
                         )
@@ -130,7 +147,7 @@ fun SettingsScreen(
                                 text = if (hasBatteryOptimizationExemption) {
                                     "Background optimization already allowed"
                                 } else {
-                                    "Allow CalmMusic to run in background"
+                                    "Allow CalmSonic to run in background"
                                 },
                                 fontSize = 16.sp,
                             )
@@ -193,6 +210,26 @@ fun SettingsScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clickable { onStreamingProviderChange(StreamingProvider.SUBSONIC) }
+                                .padding(end = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextMMD(
+                                text = "Subsonic",
+                                fontSize = 16.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                            RadioButtonMMD(
+                                selected = streamingProvider == StreamingProvider.SUBSONIC,
+                                onClick = { onStreamingProviderChange(StreamingProvider.SUBSONIC) },
+                            )
+                        }
+
+                        DashedDivider(thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
                                 .clickable { onStreamingProviderChange(StreamingProvider.YOUTUBE) }
                                 .padding(end = 16.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -207,6 +244,22 @@ fun SettingsScreen(
                                 onClick = { onStreamingProviderChange(StreamingProvider.YOUTUBE) },
                             )
                         }
+                    }
+                }
+
+                if (streamingProvider == StreamingProvider.SUBSONIC) {
+                    item {
+                        SubsonicSettingsSection(
+                            initialUrl = subsonicBaseUrl,
+                            initialUsername = subsonicUsername,
+                            initialPassword = subsonicPassword,
+                            maxBitrateKbps = subsonicMaxBitrateKbps,
+                            isTesting = isTestingSubsonic,
+                            testMessage = subsonicTestMessage,
+                            onSaveConnection = onSaveSubsonicConnection,
+                            onMaxBitrateChange = onSubsonicMaxBitrateChange,
+                            onTestClick = onTestSubsonicClick,
+                        )
                     }
                 }
 
@@ -567,6 +620,113 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SubsonicSettingsSection(
+    initialUrl: String,
+    initialUsername: String,
+    initialPassword: String,
+    maxBitrateKbps: Int?,
+    isTesting: Boolean,
+    testMessage: String?,
+    onSaveConnection: (String, String, String) -> Unit,
+    onMaxBitrateChange: (Int?) -> Unit,
+    onTestClick: () -> Unit,
+) {
+    var url by remember(initialUrl) { mutableStateOf(initialUrl) }
+    var username by remember(initialUsername) { mutableStateOf(initialUsername) }
+    var password by remember(initialPassword) { mutableStateOf(initialPassword) }
+
+    Spacer(modifier = Modifier.height(24.dp))
+
+    TextMMD(
+        text = "Subsonic server",
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold,
+    )
+
+    HorizontalDividerMMD(
+        thickness = 1.dp,
+        modifier = Modifier.padding(vertical = 8.dp)
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(end = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { TextMMD(text = "Server URL") },
+            placeholder = { TextMMD(text = "https://navidrome.example.com") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        )
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { TextMMD(text = "Username") },
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { TextMMD(text = "Password") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        )
+
+        ButtonMMD(
+            onClick = {
+                onSaveConnection(url, username, password)
+                onTestClick()
+            },
+            enabled = !isTesting && url.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
+        ) {
+            TextMMD(text = if (isTesting) "Testing…" else "Save and test connection")
+        }
+
+        if (!testMessage.isNullOrBlank()) {
+            TextMMD(text = testMessage, fontSize = 14.sp)
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        TextMMD(
+            text = "Stream bitrate",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        TextMMD(
+            text = "Original plays the file as stored. Lower rates transcode on the server.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        val bitrateOptions = listOf(null to "Original", 128 to "128", 192 to "192", 320 to "320")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            bitrateOptions.forEach { (value, label) ->
+                SuggestionChipMMD(
+                    label = { TextMMD(text = label, fontSize = 12.sp) },
+                    onClick = { onMaxBitrateChange(value) },
+                )
+            }
+        }
+        TextMMD(
+            text = "Selected: ${maxBitrateKbps?.let { "$it kbps" } ?: "Original"}",
+            fontSize = 12.sp,
+        )
     }
 }
 

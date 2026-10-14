@@ -80,6 +80,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.calmapps.calmmusic.data.StreamingProvider
 import com.calmapps.calmmusic.overlay.SystemOverlayService
+import com.calmapps.calmmusic.subsonic.toAlbumUiModel
+import com.calmapps.calmmusic.subsonic.toSongUiModel
 import com.calmapps.calmmusic.ui.AlbumDetailsScreen
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.AlbumsScreen
@@ -112,8 +114,10 @@ import com.mudita.mmd.components.snackbar.SnackbarDurationMMD
 import com.mudita.mmd.components.snackbar.SnackbarHostMMD
 import com.mudita.mmd.components.snackbar.SnackbarHostStateMMD
 import com.mudita.mmd.components.text.TextMMD
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -290,11 +294,17 @@ fun CalmMusic(app: CalmMusic) {
     val streamingProvider = streamingProviderState.value
     var isAuthenticated by remember { mutableStateOf(app.tokenProvider.getUserToken().isNotEmpty()) }
 
-    val isStreamingAvailable by remember(streamingProvider, isAuthenticated) {
+    val subsonicConfigured by settingsManager.subsonicConfigured.collectAsState()
+    val subsonicBaseUrl by settingsManager.subsonicBaseUrlFlow.collectAsState()
+    val subsonicUsername by settingsManager.subsonicUsernameFlow.collectAsState()
+    var isTestingSubsonic by remember { mutableStateOf(false) }
+    var subsonicTestMessage by remember { mutableStateOf<String?>(null) }
+    val isStreamingAvailable by remember(streamingProvider, isAuthenticated, subsonicConfigured) {
         derivedStateOf {
             when (streamingProvider) {
                 StreamingProvider.APPLE_MUSIC -> isAuthenticated
                 StreamingProvider.YOUTUBE -> true
+                StreamingProvider.SUBSONIC -> subsonicConfigured
             }
         }
     }
@@ -449,6 +459,13 @@ fun CalmMusic(app: CalmMusic) {
 
                         val topVideoIds = songResults.take(5).map { it.videoId }
                         app.youTubePrecacheManager.precacheSearchResults(topVideoIds)
+                    }
+                    StreamingProvider.SUBSONIC -> {
+                        val result = withContext(Dispatchers.IO) {
+                            app.subsonicClient.search3(query)
+                        }
+                        searchSongs = result.songs.map { it.toSongUiModel(app.subsonicClient) }
+                        searchAlbums = result.albums.map { it.toAlbumUiModel() }
                     }
                 }
             } catch (e: Exception) {
@@ -799,6 +816,16 @@ fun CalmMusic(app: CalmMusic) {
     LaunchedEffect(includeLocalMusic, localMusicFolders) {
         delay(500L)
         resyncLocalLibrary(includeLocalMusic, localMusicFolders)
+    }
+
+    LaunchedEffect(streamingProvider, subsonicConfigured) {
+        if (streamingProvider == StreamingProvider.SUBSONIC && subsonicConfigured) {
+            try {
+                viewModel.syncSubsonicLibrary()
+            } catch (e: Exception) {
+                songsError = e.message ?: "Failed to sync Subsonic library"
+            }
+        }
     }
 
     val openStreamingSettings: () -> Unit = {
@@ -1224,6 +1251,13 @@ fun CalmMusic(app: CalmMusic) {
                                         val startIndex = if (index >= 0) index else 0
                                         startPlaybackFromQueue(songs, startIndex)
                                     }
+
+                                    StreamingProvider.SUBSONIC -> {
+                                        val songs = searchSongs
+                                        val index = songs.indexOfFirst { it.id == song.id }
+                                        val startIndex = if (index >= 0) index else 0
+                                        startPlaybackFromQueue(songs, startIndex)
+                                    }
                                 }
                             }
                         },
@@ -1403,6 +1437,38 @@ fun CalmMusic(app: CalmMusic) {
                         localScanSkippedUnchanged = localScanSkippedUnchanged,
                         localScanIndexedNewOrUpdated = localScanIndexedNewOrUpdated,
                         localScanDeletedMissing = localScanDeletedMissing,
+                        subsonicBaseUrl = subsonicBaseUrl,
+                        subsonicUsername = subsonicUsername,
+                        subsonicPassword = settingsManager.subsonicPassword,
+                        subsonicMaxBitrateKbps = settingsManager.subsonicMaxBitrateKbps,
+                        isTestingSubsonic = isTestingSubsonic,
+                        subsonicTestMessage = subsonicTestMessage,
+                        onSaveSubsonicConnection = { url, username, password ->
+                            settingsManager.setSubsonicConnection(url, username, password)
+                        },
+                        onSubsonicMaxBitrateChange = { bitrate ->
+                            settingsManager.setSubsonicMaxBitrateKbps(bitrate)
+                        },
+                        onTestSubsonicClick = {
+                            searchScope.launch {
+                                isTestingSubsonic = true
+                                subsonicTestMessage = null
+                                subsonicTestMessage = try {
+                                    withContext(Dispatchers.IO) { app.subsonicClient.ping() }
+                                } catch (e: Exception) {
+                                    e.message ?: "Connection failed"
+                                }
+                                isTestingSubsonic = false
+                                if (settingsManager.hasSubsonicCredentials()) {
+                                    try {
+                                        viewModel.syncSubsonicLibrary()
+                                        playlistsViewModel.refreshPlaylists()
+                                    } catch (e: Exception) {
+                                        songsError = e.message
+                                    }
+                                }
+                            }
+                        },
                     )
                 }
             }

@@ -80,7 +80,7 @@ fun ArtistsScreen(
                     if (!hasAnySongs) {
                         LibraryOnboardingEmptyState(
                             title = "No artists yet",
-                            body = "Connect Apple Music or choose local folders in Settings to start building your library.",
+                            body = "Connect a Subsonic server or choose local folders in Settings to start building your library.",
                             onOpenStreamingSettingsClick = onOpenStreamingSettingsClick,
                             onOpenLocalSettingsClick = onOpenLocalSettingsClick,
                         )

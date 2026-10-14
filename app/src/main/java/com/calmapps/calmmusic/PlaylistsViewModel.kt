@@ -9,6 +9,9 @@ import com.calmapps.calmmusic.data.CalmMusicDatabase
 import com.calmapps.calmmusic.data.PlaylistManager
 import com.calmapps.calmmusic.data.PlaylistTrackEntity
 import com.calmapps.calmmusic.data.SongEntity
+import com.calmapps.calmmusic.subsonic.SubsonicIds
+import com.calmapps.calmmusic.subsonic.SubsonicLibrarySync
+import com.calmapps.calmmusic.subsonic.toSongUiModel
 import com.calmapps.calmmusic.ui.PlaylistUiModel
 import com.calmapps.calmmusic.ui.SongUiModel
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +36,17 @@ class PlaylistsViewModel(
     private val songDao by lazy { database.songDao() }
     private val playlistDao by lazy { database.playlistDao() }
     private val playlistManager: PlaylistManager by lazy { PlaylistManager(songDao, playlistDao) }
+    private val albumDao by lazy { database.albumDao() }
+    private val artistDao by lazy { database.artistDao() }
+    private val subsonicSync: SubsonicLibrarySync by lazy {
+        SubsonicLibrarySync(
+            client = app.subsonicClient,
+            artistDao = artistDao,
+            albumDao = albumDao,
+            songDao = songDao,
+            playlistDao = playlistDao,
+        )
+    }
 
     private val _playlists = MutableStateFlow<List<PlaylistUiModel>>(emptyList())
     val playlists: StateFlow<List<PlaylistUiModel>> = _playlists
@@ -51,7 +65,13 @@ class PlaylistsViewModel(
 
     suspend fun refreshPlaylists(): List<PlaylistUiModel> {
         return withContext(Dispatchers.IO) {
-            val updated = loadPlaylistsFromDb()
+            val local = loadPlaylistsFromDb().filterNot { SubsonicIds.isPlaylist(it.id) }
+            val remote = try {
+                subsonicSync.remotePlaylists()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val updated = remote + local
             _playlists.value = updated
             updated
         }
@@ -77,21 +97,16 @@ class PlaylistsViewModel(
 
     suspend fun getPlaylistSongs(playlistId: String): List<SongUiModel> {
         return withContext(Dispatchers.IO) {
-            val entities = playlistDao.getSongsForPlaylist(playlistId)
-            entities.map { entity ->
-                SongUiModel(
-                    id = entity.id,
-                    title = entity.title,
-                    artist = entity.artist,
-                    durationText = formatDurationMillis(entity.durationMillis),
-                    durationMillis = entity.durationMillis,
-                    trackNumber = entity.trackNumber,
-                    discNumber = entity.discNumber,
-                    sourceType = entity.sourceType,
-                    audioUri = entity.audioUri,
-                    album = entity.album,
-                )
+            if (SubsonicIds.isPlaylist(playlistId) && app.subsonicClient.isConfigured()) {
+                try {
+                    val remote = subsonicSync.loadPlaylistSongs(playlistId)
+                    if (remote.isNotEmpty()) return@withContext remote
+                } catch (_: Exception) {
+                    // Fall back to whatever is cached locally.
+                }
             }
+            val entities = playlistDao.getSongsForPlaylist(playlistId)
+            entities.map { it.toSongUiModel(app.subsonicClient) }
         }
     }
 

@@ -94,8 +94,10 @@ class PlaybackService : MediaSessionService() {
                 val meta = mediaItem?.mediaMetadata
                 if (meta != null) {
                     val uri = mediaItem.localConfiguration?.uri
-                    val inferredSourceType = when (uri?.scheme) {
-                        "content", "file" -> "LOCAL_FILE"
+                    val path = uri?.encodedPath.orEmpty()
+                    val inferredSourceType = when {
+                        uri?.scheme == "content" || uri?.scheme == "file" -> "LOCAL_FILE"
+                        path.contains("/rest/") -> "SUBSONIC"
                         else -> "YOUTUBE"
                     }
 
@@ -144,15 +146,15 @@ class PlaybackService : MediaSessionService() {
 
         val upstreamFactory = OkHttpDataSource.Factory(okHttpClient)
             .setUserAgent(NEWPIPE_USER_AGENT)
-            .setDefaultRequestProperties(mapOf(
-                "Cookie" to BYPASS_COOKIES,
-                "Referer" to "https://www.youtube.com/"
-            ))
 
         val resolvingFactory = ResolvingDataSource.Factory(upstreamFactory) { dataSpec ->
             val uri = dataSpec.uri
             val scheme = uri.scheme
+            val path = uri.encodedPath.orEmpty()
             if (scheme == "content" || scheme == "file") {
+                return@Factory dataSpec
+            }
+            if (path.contains("/rest/") || path.contains("stream.view") || path.contains("getCoverArt")) {
                 return@Factory dataSpec
             }
 
@@ -181,7 +183,12 @@ class PlaybackService : MediaSessionService() {
             precache.putUrl(videoId, resolvedUrl, resolverLabel, now)
             app.playbackStateManager.updateStreamResolverLabel(resolverLabel)
 
-            dataSpec.withUri(resolvedUrl.toUri())
+            dataSpec.withUri(resolvedUrl.toUri()).withRequestHeaders(
+                mapOf(
+                    "Cookie" to BYPASS_COOKIES,
+                    "Referer" to "https://www.youtube.com/",
+                ),
+            )
         }
 
         val networkAndCacheStack = CacheDataSource.Factory()
@@ -193,7 +200,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun createNotificationChannel() {
-        val name = "CalmMusic playback"
+        val name = "CalmSonic playback"
         val descriptionText = "Music playback controls"
         val importance = NotificationManager.IMPORTANCE_LOW
         val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {

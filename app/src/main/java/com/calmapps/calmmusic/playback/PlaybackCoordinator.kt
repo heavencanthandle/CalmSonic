@@ -1,7 +1,9 @@
 package com.calmapps.calmmusic.playback
 
+import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import com.calmapps.calmmusic.subsonic.isDirectPlaybackSource
 import com.calmapps.calmmusic.ui.SongUiModel
 
 /**
@@ -66,7 +68,7 @@ class PlaybackCoordinator {
                     appleCounter++
                 }
 
-                "LOCAL_FILE", "YOUTUBE_DOWNLOAD" -> {
+                else -> if (isDirectPlaybackSource(song.sourceType)) {
                     val uri = song.audioUri
                     if (!uri.isNullOrBlank()) {
                         localMap[globalIndex] = localCounter
@@ -88,6 +90,9 @@ class PlaybackCoordinator {
                 .setTitle(song.title)
                 .setArtist(song.artist)
                 .setAlbumTitle(song.album)
+                .apply {
+                    song.artworkUri?.let { setArtworkUri(it.toUri()) }
+                }
                 .build()
 
             MediaItem.Builder()

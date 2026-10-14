@@ -19,6 +19,7 @@ import com.calmapps.calmmusic.data.CalmMusicSettingsManager
 import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.data.PlaybackStateManager
 import com.calmapps.calmmusic.overlay.SystemOverlayService
+import com.calmapps.calmmusic.subsonic.SubsonicClient
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -110,6 +111,10 @@ class CalmMusic : Application(), DefaultLifecycleObserver {
 
     lateinit var youTubeDownloadManager: YouTubeDownloadManager
         private set
+
+    val subsonicClient: SubsonicClient by lazy {
+        SubsonicClient(settingsManager)
+    }
 
     override fun onCreate() {
         super<Application>.onCreate()

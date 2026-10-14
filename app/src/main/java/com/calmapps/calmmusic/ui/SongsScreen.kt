@@ -28,6 +28,7 @@ data class SongUiModel(
     val sourceType: String = "APPLE_MUSIC",
     val audioUri: String? = null,
     val album: String? = null,
+    val artworkUri: String? = null,
 )
 
 @Composable

@@ -47,7 +47,7 @@ fun ArtistDetailsScreen(
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(1) }
     val tabOptions = listOf("Songs", "Albums")
 
     val playbackState by viewModel.playbackState.collectAsState()
@@ -66,6 +66,11 @@ fun ArtistDetailsScreen(
             val content = viewModel.getArtistContent(artistId)
             songs = content.songs
             albums = content.albums
+            selectedTab = when {
+                albums.isNotEmpty() -> 1
+                songs.isNotEmpty() -> 0
+                else -> 1
+            }
         } catch (e: Exception) {
             errorMessage = e.message ?: "Failed to load artist"
         } finally {
@@ -103,7 +108,7 @@ fun ArtistDetailsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    TextMMD(text = "No content for this artist yet")
+                    TextMMD(text = "No albums or songs for this artist yet")
                 }
             }
 

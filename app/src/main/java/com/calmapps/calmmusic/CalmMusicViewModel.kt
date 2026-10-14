@@ -25,6 +25,11 @@ import com.calmapps.calmmusic.data.NowPlayingStorage
 import com.calmapps.calmmusic.data.NowPlayingRepeatModeKeys
 import com.calmapps.calmmusic.data.SongEntity
 import com.calmapps.calmmusic.playback.PlaybackCoordinator
+import com.calmapps.calmmusic.subsonic.SubsonicIds
+import com.calmapps.calmmusic.subsonic.SubsonicLibrarySync
+import com.calmapps.calmmusic.subsonic.isDirectPlaybackSource
+import com.calmapps.calmmusic.subsonic.toAlbumUiModel
+import com.calmapps.calmmusic.subsonic.toSongUiModel
 import com.calmapps.calmmusic.ui.AlbumUiModel
 import com.calmapps.calmmusic.ui.ArtistUiModel
 import com.calmapps.calmmusic.ui.PlaylistUiModel
@@ -58,6 +63,15 @@ class CalmMusicViewModel(
     private val playlistDao by lazy { database.playlistDao() }
     private val libraryRepository: LibraryRepository by lazy { LibraryRepository(app) }
     private val nowPlayingStorage: NowPlayingStorage by lazy { app.nowPlayingStorage }
+    private val subsonicSync: SubsonicLibrarySync by lazy {
+        SubsonicLibrarySync(
+            client = app.subsonicClient,
+            artistDao = artistDao,
+            albumDao = albumDao,
+            songDao = songDao,
+            playlistDao = playlistDao,
+        )
+    }
 
     private val playbackCoordinator = PlaybackCoordinator()
     private var localPlaybackMonitorJob: Job? = null
@@ -173,24 +187,37 @@ class CalmMusicViewModel(
                 songDao.getSongsByAlbumId(id)
             }.distinctBy { it.id }
 
-            allEntities.map { entity ->
-                SongUiModel(
-                    id = entity.id,
-                    title = entity.title,
-                    artist = entity.artist,
-                    durationText = formatDurationMillis(entity.durationMillis),
-                    durationMillis = entity.durationMillis,
-                    trackNumber = entity.trackNumber,
-                    discNumber = entity.discNumber,
-                    sourceType = entity.sourceType,
-                    audioUri = entity.audioUri,
-                    album = entity.album,
-                )
-            }.sortedWith(compareBy({ it.discNumber ?: 1 }, { it.trackNumber ?: 0 }))
+            allEntities.map { it.toSongUiModel(app.subsonicClient) }
+                .sortedWith(compareBy({ it.discNumber ?: 1 }, { it.trackNumber ?: 0 }))
         }
     }
 
-    suspend fun getAlbumSongsForDetails(album: AlbumUiModel): List<SongUiModel> {
+    data class AlbumContent(
+        val songs: List<SongUiModel>,
+        val debugTrace: String = "",
+    )
+
+    suspend fun getAlbumSongsForDetails(album: AlbumUiModel): AlbumContent {
+        val songs = if (album.sourceType == SubsonicIds.SOURCE || SubsonicIds.isSubsonic(album.id)) {
+            val remote = subsonicSync.loadAlbumSongs(album.id, album.title)
+            if (remote.isNotEmpty()) remote else loadNonSubsonicAlbumSongs(album)
+        } else {
+            loadNonSubsonicAlbumSongs(album)
+        }
+        val debugTrace = buildString {
+            append("albumId=").append(album.id).append('\n')
+            append("title=").append(album.title).append('\n')
+            append("source=").append(album.sourceType).append('\n')
+            append("songs=").append(songs.size).append('\n')
+            append(app.subsonicClient.lastBrowseTrace)
+        }
+        runCatching {
+            java.io.File(app.filesDir, "subsonic-debug.txt").writeText(debugTrace)
+        }
+        return AlbumContent(songs, debugTrace)
+    }
+
+    private suspend fun loadNonSubsonicAlbumSongs(album: AlbumUiModel): List<SongUiModel> {
         val localSongs = getAlbumSongs(album.id)
 
         val settings = CalmMusicSettingsManager(app)
@@ -308,7 +335,8 @@ class CalmMusicViewModel(
 
     data class ArtistContent(
         val songs: List<SongUiModel>,
-        val albums: List<AlbumUiModel>
+        val albums: List<AlbumUiModel>,
+        val debugTrace: String = "",
     )
 
     suspend fun getArtistContent(artistId: String): ArtistContent {
@@ -318,6 +346,18 @@ class CalmMusicViewModel(
 
             val allArtists = artistDao.getAllArtistsWithCounts()
             val baseArtist = allArtists.firstOrNull { it.id == artistId }
+
+            var loadError: String? = null
+            val remoteDetail = if (SubsonicIds.isSubsonic(artistId)) {
+                try {
+                    subsonicSync.loadArtistAlbums(artistId)
+                } catch (e: Exception) {
+                    loadError = "loadArtistAlbums ${e.javaClass.simpleName}: ${e.message}"
+                    null
+                }
+            } else {
+                null
+            }
 
             val relatedArtistIds: List<String> = if (baseArtist != null) {
                 val key = normalizeName(baseArtist.name)
@@ -334,20 +374,9 @@ class CalmMusicViewModel(
                 .flatMap { id -> albumDao.getAlbumsByArtistId(id) }
                 .distinctBy { it.id }
 
-            val songs = songEntities.map { entity ->
-                SongUiModel(
-                    id = entity.id,
-                    title = entity.title,
-                    artist = entity.artist,
-                    durationText = formatDurationMillis(entity.durationMillis),
-                    durationMillis = entity.durationMillis,
-                    trackNumber = entity.trackNumber,
-                    discNumber = entity.discNumber,
-                    sourceType = entity.sourceType,
-                    audioUri = entity.audioUri,
-                    album = entity.album,
-                )
-            }
+            val remoteSongs = remoteDetail?.songs.orEmpty().map { it.toSongUiModel(app.subsonicClient) }
+            val songs = (songEntities.map { it.toSongUiModel(app.subsonicClient) } + remoteSongs)
+                .distinctBy { it.id }
 
             val albumIdToYear: Map<String, Int?> = songEntities
                 .mapNotNull { entity ->
@@ -362,7 +391,7 @@ class CalmMusicViewModel(
                     years.filterNotNull().maxOrNull()
                 }
 
-            val mergedAlbums = albumEntities
+            val roomAlbums = albumEntities
                 .groupBy {
                     (it.name.lowercase().trim() to (it.artist?.lowercase()?.trim() ?: ""))
                 }
@@ -377,13 +406,30 @@ class CalmMusicViewModel(
                         releaseYear = albumIdToYear[primary.id],
                     )
                 }
+            val remoteAlbums = remoteDetail?.albums.orEmpty().map { album ->
+                album.toAlbumUiModel().copy(releaseYear = album.year ?: albumIdToYear[SubsonicIds.album(album.id)])
+            }
+            val mergedAlbums = (roomAlbums + remoteAlbums)
+                .distinctBy { it.id }
                 .sortedWith(
                     compareByDescending<AlbumUiModel> { album ->
                         album.releaseYear ?: Int.MIN_VALUE
                     }.thenBy { album -> album.title },
                 )
 
-            ArtistContent(songs, mergedAlbums)
+            val debugTrace = buildString {
+                append("id=").append(artistId).append('\n')
+                if (loadError != null) append(loadError).append('\n')
+                append("ui albums=").append(mergedAlbums.size)
+                append(" songs=").append(songs.size).append('\n')
+                val remoteTrace = app.subsonicClient.lastBrowseTrace
+                if (remoteTrace.isNotBlank()) append(remoteTrace)
+            }
+            runCatching {
+                java.io.File(app.filesDir, "subsonic-debug.txt").writeText(debugTrace)
+            }
+
+            ArtistContent(songs, mergedAlbums, debugTrace)
         }
     }
 
@@ -428,7 +474,8 @@ class CalmMusicViewModel(
 
             val needsInit = when (song.sourceType) {
                 "APPLE_MUSIC" -> !playbackCoordinator.appleQueueInitialized
-                "LOCAL_FILE", "YOUTUBE", "YOUTUBE_DOWNLOAD" -> !playbackCoordinator.localQueueInitialized
+                "LOCAL_FILE", "YOUTUBE", "YOUTUBE_DOWNLOAD", SubsonicIds.SOURCE ->
+                    !playbackCoordinator.localQueueInitialized
                 else -> false
             }
 
@@ -477,6 +524,7 @@ class CalmMusicViewModel(
             releaseYear = null,
             localLastModifiedMillis = null,
             localFileSizeBytes = null,
+            coverArtId = null,
         )
 
     fun startPlaybackFromQueue(
@@ -538,19 +586,18 @@ class CalmMusicViewModel(
                 RepeatMode.ONE -> PlaybackRepeatMode.REPEAT_MODE_ONE
             }
             app.mediaPlayerController.setRepeatMode(repeat)
-        } else if (song.sourceType == "LOCAL_FILE" || song.sourceType == "YOUTUBE_DOWNLOAD") {
+        } else if (isDirectPlaybackSource(song.sourceType)) {
             val controller = localController
             if (controller != null && playbackCoordinator.localMediaItemsForQueue.isNotEmpty()) {
 
                 // IMPORTANT: Segmented Playback Logic
-                // We identify the contiguous segment of local media (LOCAL_FILE or
-                // YOUTUBE_DOWNLOAD) starting from startIndex. This prevents the
-                // player from auto-advancing into "gaps" where a streaming
-                // YouTube song should be.
+                // We identify the contiguous segment of local media (LOCAL_FILE,
+                // YOUTUBE_DOWNLOAD, or SUBSONIC) starting from startIndex. This
+                // prevents the player from auto-advancing into "gaps" where a
+                // streaming YouTube song should be.
                 var segmentEndIndex = startIndex
                 while (segmentEndIndex < queue.size &&
-                    (queue[segmentEndIndex].sourceType == "LOCAL_FILE" ||
-                            queue[segmentEndIndex].sourceType == "YOUTUBE_DOWNLOAD")
+                    isDirectPlaybackSource(queue[segmentEndIndex].sourceType)
                 ) {
                     segmentEndIndex++
                 }
@@ -709,7 +756,7 @@ class CalmMusicViewModel(
             _playbackState.value = newState
             persistPlaybackSnapshot(newState)
 
-            if (current.sourceType == "LOCAL_FILE" || current.sourceType == "YOUTUBE_DOWNLOAD") {
+            if (isDirectPlaybackSource(current.sourceType)) {
                 startPlaybackFromQueue(
                     queue = newQueue,
                     startIndex = 0,
@@ -746,7 +793,7 @@ class CalmMusicViewModel(
             _playbackState.value = newState
             persistPlaybackSnapshot(newState)
 
-            if (restoredCurrent.sourceType == "LOCAL_FILE" || restoredCurrent.sourceType == "YOUTUBE_DOWNLOAD") {
+            if (isDirectPlaybackSource(restoredCurrent.sourceType)) {
                 startPlaybackFromQueue(
                     queue = restoreQueue,
                     startIndex = originalIndex,
@@ -770,7 +817,7 @@ class CalmMusicViewModel(
         persistPlaybackSnapshot()
 
         val song = state.nowPlayingSong
-        if (song?.sourceType == "LOCAL_FILE" || song?.sourceType == "YOUTUBE_DOWNLOAD") {
+        if (isDirectPlaybackSource(song?.sourceType ?: "")) {
             localController?.let { controller ->
                 controller.repeatMode = when (newRepeat) {
                     RepeatMode.ONE -> Player.REPEAT_MODE_ONE
@@ -892,11 +939,12 @@ class CalmMusicViewModel(
                 val state = _playbackState.value
                 val queue = state.playbackQueue
                 val currentSong = state.nowPlayingSong
+                val isDirect = isDirectPlaybackSource(currentSong?.sourceType ?: "")
                 val isLocalFile = currentSong?.sourceType == "LOCAL_FILE" || currentSong?.sourceType == "YOUTUBE_DOWNLOAD"
                 val isYouTube = currentSong?.sourceType == "YOUTUBE"
                 var didAutoAdvance = false
 
-                if (!isLocalFile && !isYouTube) {
+                if (!isDirect && !isYouTube) {
                     delay(slowIntervalMs)
                     continue
                 }
@@ -1000,12 +1048,20 @@ class CalmMusicViewModel(
                 }
 
                 val nextDelayMs = when {
-                    (isLocalFile || isYouTube) && isPlaying -> fastIntervalMs
+                    (isDirect || isYouTube) && isPlaying -> fastIntervalMs
                     else -> slowIntervalMs
                 }
                 delay(nextDelayMs)
             }
         }
+    }
+
+    suspend fun syncSubsonicLibrary() {
+        if (!app.subsonicClient.isConfigured()) return
+        withContext(Dispatchers.IO) {
+            subsonicSync.syncArtistsAndAlbums()
+        }
+        refreshLibraryFromDatabase()
     }
 
     suspend fun resyncLocalLibrary(
@@ -1245,19 +1301,7 @@ class CalmMusicViewModel(
                     }.count()
                 }
 
-            val songModels = allSongs.map { entity ->
-                SongUiModel(
-                    id = entity.id,
-                    title = entity.title,
-                    artist = entity.artist,
-                    durationText = com.calmapps.calmmusic.formatDurationMillis(entity.durationMillis),
-                    durationMillis = entity.durationMillis,
-                    trackNumber = entity.trackNumber,
-                    sourceType = entity.sourceType,
-                    audioUri = entity.audioUri,
-                    album = entity.album,
-                )
-            }
+            val songModels = allSongs.map { it.toSongUiModel(app.subsonicClient) }
 
             val albumIdToYear: Map<String, Int?> = allSongs
                 .mapNotNull { entity ->
@@ -1363,19 +1407,7 @@ class CalmMusicViewModel(
                     }.count()
                 }
 
-            _librarySongs.value = allSongs.map { entity ->
-                SongUiModel(
-                    id = entity.id,
-                    title = entity.title,
-                    artist = entity.artist,
-                    durationText = formatDurationMillis(entity.durationMillis),
-                    durationMillis = entity.durationMillis,
-                    trackNumber = entity.trackNumber,
-                    sourceType = entity.sourceType,
-                    audioUri = entity.audioUri,
-                    album = entity.album,
-                )
-            }
+            _librarySongs.value = allSongs.map { it.toSongUiModel(app.subsonicClient) }
             val albumIdToYear: Map<String, Int?> = allSongs
                 .mapNotNull { entity ->
                     val albumId = entity.albumId ?: return@mapNotNull null
@@ -1422,19 +1454,7 @@ class CalmMusicViewModel(
                 val songsById = allSongs.associateBy { it.id }
                 val queueEntities = snapshot.queueSongIds.mapNotNull { songsById[it] }
                 if (queueEntities.isNotEmpty()) {
-                    val playbackQueue = queueEntities.map { entity ->
-                        SongUiModel(
-                            id = entity.id,
-                            title = entity.title,
-                            artist = entity.artist,
-                            durationText = formatDurationMillis(entity.durationMillis),
-                            durationMillis = entity.durationMillis,
-                            trackNumber = entity.trackNumber,
-                            sourceType = entity.sourceType,
-                            audioUri = entity.audioUri,
-                            album = entity.album,
-                        )
-                    }
+                    val playbackQueue = queueEntities.map { it.toSongUiModel(app.subsonicClient) }
 
                     val indexFromSnapshot = snapshot.currentIndex
                     val effectiveIndex = indexFromSnapshot?.takeIf { it in playbackQueue.indices } ?: 0

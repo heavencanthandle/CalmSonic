@@ -55,7 +55,7 @@ fun AlbumDetailsScreen(
         isLoading = true
         errorMessage = null
         try {
-            songs = viewModel.getAlbumSongsForDetails(album)
+            songs = viewModel.getAlbumSongsForDetails(album).songs
         } catch (e: Exception) {
             errorMessage = e.message ?: "Failed to load album songs"
         } finally {

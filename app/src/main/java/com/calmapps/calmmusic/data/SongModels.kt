@@ -34,6 +34,7 @@ data class SongEntity(
     val releaseYear: Int? = null,
     val localLastModifiedMillis: Long? = null,
     val localFileSizeBytes: Long? = null,
+    val coverArtId: String? = null,
 )
 
 @Entity(

@@ -24,6 +24,45 @@ class CalmMusicSettingsManager(context: Context) {
     private val _completeAlbumsWithYouTube = MutableStateFlow(getCompleteAlbumsWithYouTubeSync())
     val completeAlbumsWithYouTube: StateFlow<Boolean> = _completeAlbumsWithYouTube.asStateFlow()
 
+    private val _subsonicBaseUrl = MutableStateFlow(prefs.getString(KEY_SUBSONIC_BASE_URL, "") ?: "")
+    val subsonicBaseUrlFlow: StateFlow<String> = _subsonicBaseUrl.asStateFlow()
+
+    private val _subsonicUsername = MutableStateFlow(prefs.getString(KEY_SUBSONIC_USERNAME, "") ?: "")
+    val subsonicUsernameFlow: StateFlow<String> = _subsonicUsername.asStateFlow()
+
+    var subsonicBaseUrl: String
+        get() = prefs.getString(KEY_SUBSONIC_BASE_URL, "") ?: ""
+        private set(value) {
+            prefs.edit { putString(KEY_SUBSONIC_BASE_URL, value) }
+            _subsonicBaseUrl.value = value
+        }
+
+    var subsonicUsername: String
+        get() = prefs.getString(KEY_SUBSONIC_USERNAME, "") ?: ""
+        private set(value) {
+            prefs.edit { putString(KEY_SUBSONIC_USERNAME, value) }
+            _subsonicUsername.value = value
+        }
+
+    var subsonicPassword: String
+        get() = prefs.getString(KEY_SUBSONIC_PASSWORD, "") ?: ""
+        private set(value) {
+            prefs.edit { putString(KEY_SUBSONIC_PASSWORD, value) }
+        }
+
+    private val _subsonicConfigured = MutableStateFlow(
+        (prefs.getString(KEY_SUBSONIC_BASE_URL, "").orEmpty().isNotBlank()) &&
+            (prefs.getString(KEY_SUBSONIC_USERNAME, "").orEmpty().isNotBlank()) &&
+            (prefs.getString(KEY_SUBSONIC_PASSWORD, "").orEmpty().isNotBlank()),
+    )
+    val subsonicConfigured: StateFlow<Boolean> = _subsonicConfigured.asStateFlow()
+
+    val subsonicMaxBitrateKbps: Int?
+        get() {
+            val stored = prefs.getInt(KEY_SUBSONIC_MAX_BITRATE, 0)
+            return stored.takeIf { it > 0 }
+        }
+
     fun getLastAppleMusicSyncMillis(): Long {
         return prefs.getLong(KEY_LAST_APPLE_MUSIC_SYNC_MILLIS, 0L)
     }
@@ -97,6 +136,20 @@ class CalmMusicSettingsManager(context: Context) {
         prefs.edit { putBoolean(KEY_HAS_COMPLETED_PERMISSIONS_ONBOARDING, completed) }
     }
 
+    fun hasSubsonicCredentials(): Boolean =
+        subsonicBaseUrl.isNotBlank() && subsonicUsername.isNotBlank() && subsonicPassword.isNotBlank()
+
+    fun setSubsonicConnection(baseUrl: String, username: String, password: String) {
+        subsonicBaseUrl = baseUrl.trim()
+        subsonicUsername = username.trim()
+        subsonicPassword = password
+        _subsonicConfigured.value = hasSubsonicCredentials()
+    }
+
+    fun setSubsonicMaxBitrateKbps(bitrate: Int?) {
+        prefs.edit { putInt(KEY_SUBSONIC_MAX_BITRATE, bitrate ?: 0) }
+    }
+
     companion object {
         private const val PREFS_NAME = "calmmusic_settings"
         private const val KEY_INCLUDE_LOCAL_MUSIC = "include_local_music"
@@ -106,5 +159,9 @@ class CalmMusicSettingsManager(context: Context) {
         private const val KEY_HAS_COMPLETED_PERMISSIONS_ONBOARDING = "has_completed_permissions_onboarding"
         private const val KEY_STREAMING_PROVIDER = "streaming_provider"
         private const val KEY_COMPLETE_ALBUMS_WITH_YOUTUBE = "complete_albums_with_youtube"
+        private const val KEY_SUBSONIC_BASE_URL = "subsonic_base_url"
+        private const val KEY_SUBSONIC_USERNAME = "subsonic_username"
+        private const val KEY_SUBSONIC_PASSWORD = "subsonic_password"
+        private const val KEY_SUBSONIC_MAX_BITRATE = "subsonic_max_bitrate"
     }
 }
